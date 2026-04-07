@@ -1,0 +1,25 @@
+[client]
+socket = /var/lib/mysql/mysql.sock
+
+[mysqld]
+datadir                         = /var/lib/mysql
+socket                          = /var/lib/mysql/mysql.sock
+log-error                       = /var/log/mysql/mysqld.log
+pid-file                        = /var/lib/mysql/mysqld.pid
+
+character_set_server            = utf8mb4
+collation_server                = utf8mb4_unicode_ci
+
+# PXC / Galera
+pxc-strict-mode                 = PERMISSIVE
+pxc_maint_transition_period     = 0
+wsrep_on                        = ON
+wsrep_provider                  = /usr/lib64/galera4/libgalera_smm.so
+wsrep_provider_options          = "pc.wait_prim_timeout=PT5S;pc.recovery=FALSE;pc.checksum=TRUE"
+wsrep_cluster_address           = gcomm://
+wsrep_node_address              = 127.0.0.1:4567
+wsrep_node_name                 = mysql-controller-test
+wsrep_cluster_name              = pxc-integration-test
+
+# Disable inter-node TLS and SSL to keep single-node test setup simple
+pxc-encrypt-cluster-traffic     = OFF

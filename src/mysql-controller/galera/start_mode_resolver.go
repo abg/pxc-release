@@ -22,7 +22,7 @@ type StateFileReadWriter interface {
 
 type ClusterProber interface {
 	ClusterHealthy(ctx context.Context) (bool, error)
-	PeerCount() int
+	MemberCount() int
 }
 
 func NewResolver(stateFileRW StateFileReadWriter, clusterProber ClusterProber, grastateFile string, isBootstrapNode bool) *Resolver {
@@ -45,27 +45,26 @@ func (r *Resolver) Resolve(ctx context.Context) ([]string, error) {
 	slog.Info("resolving galera startup mode",
 		slog.String("state", state),
 		slog.Bool("state_file_present", !noStateFile),
-		slog.Int("peer_count", r.clusterProber.PeerCount()),
+		slog.Int("member_count", r.clusterProber.MemberCount()),
 		slog.Bool("is_bootstrap_node", r.isBootstrapNode),
 	)
 
-	// peerCount | stateFile        | bootstrapNode | clusterHealthy | result
-	// 1         | any              | any           | any            | bootstrap
-	// >1        | absent           | false         | any            | join
-	// >1        | absent           | true          | yes            | join
-	// >1        | absent           | true          | no             | bootstrap
-	// >1        | NEEDS_BOOTSTRAP  | any           | yes            | join
-	// >1        | NEEDS_BOOTSTRAP  | any           | no             | bootstrap
-	// >1        | SINGLE_NODE      | any           | yes            | join  (upgrade path)
-	// >1        | SINGLE_NODE      | any           | no             | bootstrap (upgrade path)
-	// >1        | CLUSTERED        | any           | any            | join
-	// >1        | unknown          | any           | any            | join
+	// memberCount | stateFile        | bootstrapNode | clusterHealthy | result
+	// =1          | any              | any           | any            | bootstrap
+	// >1          | absent           | false         | any            | join
+	// >1          | absent           | true          | yes            | join
+	// >1          | absent           | true          | no             | bootstrap
+	// >1          | NEEDS_BOOTSTRAP  | any           | yes            | join
+	// >1          | NEEDS_BOOTSTRAP  | any           | no             | bootstrap
+	// >1          | SINGLE_NODE      | any           | yes            | join  (upgrade path)
+	// >1          | SINGLE_NODE      | any           | no             | bootstrap (upgrade path)
+	// >1          | CLUSTERED        | any           | any            | join
+	// >1          | unknown          | any           | any            | join
 	//
 	// bootstrap: forms new cluster by passing mysqld --wsrep-new-cluster option
 	// join: is just starting in normal mode; galera will sync with cluster nodes defined in my.cnf
-	// TODO: peerCount should probably be clusterSize, including this node
 	switch {
-	case r.clusterProber.PeerCount() == 1:
+	case r.clusterProber.MemberCount() == 1:
 		// when only one node participating in the cluster, de facto bootstrap
 		slog.Info("single-node deploy, bootstrapping")
 		return r.bootstrap()
@@ -73,7 +72,7 @@ func (r *Resolver) Resolve(ctx context.Context) ([]string, error) {
 		// legacy assumption: no state file == first deploy
 		slog.Info("first deploy, bootstrap node, evaluating bootstrap")
 		return r.bootstrapOrJoinByHealth(ctx)
-	case state == StateSingleNode && r.clusterProber.PeerCount() > 1:
+	case state == StateSingleNode && r.clusterProber.MemberCount() > 1:
 		// previously deployed and set state SINGLE_NODE
 		// handle upgrade to a full cluster deployment
 		slog.Info("single-node to multi-node upgrade, checking cluster health")
@@ -122,9 +121,9 @@ func (r *Resolver) join() (args []string, err error) {
 	return nil, nil
 }
 
-func (r *Resolver) OnReady() error {
+func (r *Resolver) OnReady(_ context.Context) error {
 	state := StateClustered
-	if r.clusterProber.PeerCount() == 1 {
+	if r.clusterProber.MemberCount() == 1 {
 		state = StateSingleNode
 	}
 
