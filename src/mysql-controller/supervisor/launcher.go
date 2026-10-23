@@ -15,6 +15,8 @@ type Launcher struct {
 }
 
 type CommandBuilder interface {
+	// Build must return promptly on cancellation and must not start the command.
+	// The command must not use exec.CommandContext: the supervisor owns signals.
 	Build(context.Context) (*exec.Cmd, error)
 }
 
@@ -26,30 +28,21 @@ func NewLauncher(cmdFactory CommandBuilder) *Launcher {
 
 // Launch starts mysqld and returns a ProcessHandle.
 //
-// extraArgs are appended to BaseArgs at call time — typically the
-// output of galera.Resolver.ResolveArgs(). nil is safe and treated
-// as no extra args.
-//
 // Launch returns as soon as the process is started. It does NOT wait
 // for mysqld to be ready to accept connections — that is the
 // responsibility of the readiness probe.
 //
-// The context passed here should be a long-lived background context,
-// not an HTTP request context. exec.CommandContext cancellation sends
-// SIGKILL, bypassing the graceful shutdown path. Graceful shutdown is
-// handled explicitly via ProcessHandle.stopGracefully.
-//
-// mysqld is started without Setpgid. It stays in the supervisor's
-// process group so that BPM's SIGTERM to PID 1 (the supervisor) is
-// NOT automatically forwarded to mysqld by the kernel. The supervisor
-// explicitly stops mysqld via stopGracefully before exiting, giving
-// InnoDB a clean shutdown window. Setpgid would detach mysqld from
-// the process group but BPM signals processes in the container
-// directly anyway, so it provides no benefit and makes the shutdown
-// path less explicit.
+// Cancellation aborts command preparation. If it races cmd.Start, Launch still
+// returns the child handle so the supervisor can terminate and reap it.
 func (l *Launcher) Launch(ctx context.Context) (*ProcessHandle, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	cmd, err := l.CommandFactory.Build(ctx)
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 

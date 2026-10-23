@@ -228,12 +228,8 @@ var _ = Describe("Supervisor", func() {
 
 		Describe("Stop respects ctx cancellation", func() {
 			It("returns ctx.Err() when the context expires before the process stops", func() {
-				// Use a probe that never passes so the process never starts — we then
-				// Stop with a context that expires before the run loop sets StateStopped.
-				// This validates that waitForState doesn't hang.
-				//
-				// In this sub-case we use a fresh supervisor with a blocking probe so
-				// the supervisor is stuck in StateStarting, making it easy to race Stop.
+				// An already-expired caller context must be rejected immediately,
+				// including while a child is still waiting for readiness.
 				blockProbe := newBlockingProbe()
 				launcher2 := supervisor.NewLauncher(longRunningBuilder())
 				sup2 := supervisor.New(launcher2, blockProbe, nil)
@@ -282,9 +278,7 @@ var _ = Describe("Supervisor", func() {
 	// ─── Stop during readiness probe ─────────────────────────────────────────
 
 	Describe("Stop called while readiness probe is running", func() {
-		// The supervisor is in StateStarting (probe not yet passed). Stop() sets
-		// IntentStop. When the probe then passes, the supervisor must honour the
-		// pending stop rather than transitioning to StateRunning.
+		// Readiness success racing a stop must not undo the stop barrier.
 		It("reaches StateStopped after the probe passes when IntentStop is already set", func() {
 			blockProbe := newBlockingProbe()
 			launcher2 := supervisor.NewLauncher(longRunningBuilder())
