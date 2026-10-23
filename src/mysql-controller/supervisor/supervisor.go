@@ -323,12 +323,24 @@ func (s *Supervisor) waitReady(ctx context.Context, proc *ProcessHandle) error {
 	}
 }
 
-// doBackoff sleeps for d, returning true if the sleep completed and
-// false if ctx was cancelled during the wait.
+// doBackoff sleeps for d, returning true if the sleep completed or an intent
+// change arrived, and false if ctx was cancelled.
+//
+// Subscribe-then-check: intentCh is captured before reading intentVal so that
+// any setIntent call that races with the check is guaranteed to either be
+// visible in the intent read (if it completed before the read) or to close the
+// captured channel (if it completes after). This matches the pattern used by
+// waitForState and is race-free.
 func (s *Supervisor) doBackoff(ctx context.Context, d time.Duration) bool {
 	slog.Info("backing off before restart", "duration", d)
+	intentCh := s.currentIntentCh()
+	if s.intent() == IntentStop {
+		return true
+	}
 	select {
 	case <-time.After(d):
+		return true
+	case <-intentCh:
 		return true
 	case <-ctx.Done():
 		return false

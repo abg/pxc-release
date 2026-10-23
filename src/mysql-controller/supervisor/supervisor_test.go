@@ -109,6 +109,35 @@ var _ = Describe("Supervisor", func() {
 		})
 	})
 
+	// ─── Stop during backoff ─────────────────────────────────────────────────
+
+	Describe("Stop during crash-restart backoff", func() {
+		// A process that always exits immediately drives the supervisor into a
+		// crash-restart loop, causing it to sleep in doBackoff between attempts.
+		BeforeEach(func() {
+			builder = &stubBuilder{fn: func() (*exec.Cmd, error) {
+				return exec.Command("true"), nil
+			}}
+		})
+
+		It("wakes the backoff immediately rather than waiting for the timer to expire", func() {
+			// Poll frequently so we catch StateCrashed while the 1 s initial
+			// backoff is still sleeping.
+			Eventually(sup.Status, "5s", "10ms").Should(
+				HaveField("State", supervisor.StateCrashed))
+
+			// Stop with a deadline shorter than the ≥1 s backoff.
+			// With the fix, doBackoff wakes on the intent change and Stop
+			// returns in milliseconds. Without it Stop blocks for the full
+			// backoff duration and exceeds this deadline.
+			stopCtx, stopCancel := context.WithTimeout(ctx, 500*time.Millisecond)
+			defer stopCancel()
+
+			Expect(sup.Stop(stopCtx)).To(Succeed())
+			Expect(sup.Status().State).To(Equal(supervisor.StateStopped))
+		})
+	})
+
 	// ─── Pre-ready exit ───────────────────────────────────────────────────────
 
 	Describe("process exits before the readiness probe passes", func() {
