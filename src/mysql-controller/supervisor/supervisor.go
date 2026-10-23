@@ -95,10 +95,21 @@ type Supervisor struct {
 	stopTimeout time.Duration
 }
 
+// Option is a functional option for configuring a Supervisor.
+type Option func(*Supervisor)
+
+// WithStopTimeout overrides the default 30s grace period between SIGTERM
+// and SIGKILL when stopping a process.
+func WithStopTimeout(d time.Duration) Option {
+	return func(s *Supervisor) {
+		s.stopTimeout = d
+	}
+}
+
 // New constructs a Supervisor. Call Run in a goroutine to start it.
 // onReady may be nil if no post-ready hook is needed.
-func New(launcher *Launcher, probe ReadinessProbe, onReady OnReadyHook) *Supervisor {
-	return &Supervisor{
+func New(launcher *Launcher, probe ReadinessProbe, onReady OnReadyHook, opts ...Option) *Supervisor {
+	s := &Supervisor{
 		launcher:    launcher,
 		probe:       probe,
 		onReady:     onReady,
@@ -106,6 +117,10 @@ func New(launcher *Launcher, probe ReadinessProbe, onReady OnReadyHook) *Supervi
 		since:       time.Now(),
 		stopTimeout: 30 * time.Second,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Run starts the supervisor loop. Blocks until ctx is cancelled.

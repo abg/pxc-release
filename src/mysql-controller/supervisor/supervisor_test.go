@@ -232,6 +232,88 @@ var _ = Describe("Supervisor", func() {
 		})
 	})
 
+	// ─── SIGKILL escalation ───────────────────────────────────────────────────
+
+	Describe("SIGKILL escalation when process ignores SIGTERM", func() {
+		// A 200 ms stop timeout means SIGKILL fires almost immediately after
+		// the unanswered SIGTERM. Stop must still return nil — the process died.
+		It("kills the process after the stop timeout elapses and Stop returns nil", func() {
+			launcher2 := supervisor.NewLauncher(sigTermIgnoringBuilder())
+			sup2 := supervisor.New(launcher2, &immediateProbe{}, nil,
+				supervisor.WithStopTimeout(200*time.Millisecond))
+
+			ctx2, cancel2 := context.WithCancel(context.Background())
+			DeferCleanup(cancel2)
+			go sup2.Run(ctx2)
+
+			Eventually(sup2.Status, "5s").Should(HaveField("State", supervisor.StateRunning))
+
+			stopCtx, stopCancel := context.WithTimeout(ctx2, 5*time.Second)
+			defer stopCancel()
+
+			Expect(sup2.Stop(stopCtx)).To(Succeed())
+			Expect(sup2.Status().State).To(Equal(supervisor.StateStopped))
+		})
+	})
+
+	// ─── Stop during readiness probe ─────────────────────────────────────────
+
+	Describe("Stop called while readiness probe is running", func() {
+		// The supervisor is in StateStarting (probe not yet passed). Stop() sets
+		// IntentStop. When the probe then passes, the supervisor must honour the
+		// pending stop rather than transitioning to StateRunning.
+		It("reaches StateStopped after the probe passes when IntentStop is already set", func() {
+			blockProbe := newBlockingProbe()
+			launcher2 := supervisor.NewLauncher(longRunningBuilder())
+			sup2 := supervisor.New(launcher2, blockProbe, nil)
+
+			ctx2, cancel2 := context.WithCancel(context.Background())
+			DeferCleanup(cancel2)
+			go sup2.Run(ctx2)
+
+			Eventually(sup2.Status, "3s").Should(HaveField("State", supervisor.StateStarting))
+
+			stopCtx, stopCancel := context.WithTimeout(ctx2, 5*time.Second)
+			defer stopCancel()
+
+			go func() { _ = sup2.Stop(stopCtx) }()
+
+			// Wait for Stop to register IntentStop, then let the probe pass.
+			Eventually(func() supervisor.Intent {
+				return sup2.Status().Intent
+			}, "3s").Should(Equal(supervisor.IntentStop))
+			blockProbe.trigger()
+
+			Eventually(sup2.Status, "5s").Should(HaveField("State", supervisor.StateStopped))
+		})
+	})
+
+	// ─── cmd.Start() failure ─────────────────────────────────────────────────
+
+	Describe("command Start() failure", func() {
+		// Build() succeeds but the returned command refers to a non-existent
+		// binary, so cmd.Start() fails inside Launch(). This exercises the
+		// "starting mysqld" error-wrap path in launcher.go.
+		BeforeEach(func() {
+			builder = &stubBuilder{fn: func() (*exec.Cmd, error) {
+				return exec.Command("/nonexistent-binary-for-supervisor-test"), nil
+			}}
+		})
+
+		It("reaches StateCrashed and records the start error in LastError", func() {
+			Eventually(sup.Status, "5s").Should(HaveField("State", supervisor.StateCrashed))
+			Expect(sup.Status().LastError).To(MatchError(ContainSubstring("starting mysqld")))
+		})
+	})
+
+	// ─── State.String ─────────────────────────────────────────────────────────
+
+	Describe("State.String", func() {
+		It("returns 'unknown' for an unrecognised State value", func() {
+			Expect(supervisor.State(99).String()).To(Equal("unknown"))
+		})
+	})
+
 	// ─── StateStopping transition ────────────────────────────────────────────
 
 	Describe("StateStopping", func() {

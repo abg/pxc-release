@@ -56,6 +56,15 @@ func failsThenRunsBuilder(failCount int) *stubBuilder {
 	}}
 }
 
+// sigTermIgnoringBuilder returns a builder whose process explicitly ignores
+// SIGTERM. The while loop prevents sh from exec'ing sleep (which would lose
+// the trap), ensuring SIGTERM is consistently ignored until SIGKILL arrives.
+func sigTermIgnoringBuilder() *stubBuilder {
+	return &stubBuilder{fn: func() (*exec.Cmd, error) {
+		return exec.Command("sh", "-c", "trap '' TERM; while :; do sleep 1; done"), nil
+	}}
+}
+
 // ─── blockingProbe ────────────────────────────────────────────────────────────
 
 // blockingProbe blocks WaitReady until trigger() is called or ctx is cancelled.
