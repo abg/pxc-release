@@ -322,10 +322,18 @@ func (s *Supervisor) run(ctx context.Context) {
 // waitReady races the readiness probe against premature process exit.
 // Returns nil when the probe passes. Returns an error if the process
 // exits before becoming ready, or if ctx is cancelled.
+//
+// A child context (probeCtx) is passed to WaitReady so that the probe
+// goroutine is cancelled and terminates promptly when waitReady returns
+// via the proc.Wait() or ctx.Done() arms, rather than leaking until
+// the outer ctx is cancelled.
 func (s *Supervisor) waitReady(ctx context.Context, proc *ProcessHandle) error {
+	probeCtx, cancelProbe := context.WithCancel(ctx)
+	defer cancelProbe()
+
 	readyCh := make(chan error, 1)
 	go func() {
-		readyCh <- s.probe.WaitReady(ctx)
+		readyCh <- s.probe.WaitReady(probeCtx)
 	}()
 
 	select {

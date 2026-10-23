@@ -91,6 +91,20 @@ func (p *blockingProbe) WaitReady(ctx context.Context) error {
 // trigger signals all current and future WaitReady calls to return.
 func (p *blockingProbe) trigger() { p.once.Do(func() { close(p.triggerCh) }) }
 
+// trackingProbe counts active WaitReady calls. active.Load() returns zero
+// once every in-flight probe goroutine has returned — use this to verify
+// that waitReady cleans up its goroutine promptly after the process exits.
+type trackingProbe struct {
+	active atomic.Int32
+}
+
+func (p *trackingProbe) WaitReady(ctx context.Context) error {
+	p.active.Add(1)
+	defer p.active.Add(-1)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
 // ─── immediateProbe ───────────────────────────────────────────────────────────
 
 // immediateProbe satisfies ReadinessProbe and returns immediately on every call.

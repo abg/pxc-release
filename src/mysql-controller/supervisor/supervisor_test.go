@@ -138,6 +138,29 @@ var _ = Describe("Supervisor", func() {
 		})
 	})
 
+	// ─── Probe goroutine cleanup ──────────────────────────────────────────────
+
+	Describe("probe goroutine cleanup on pre-ready exit", func() {
+		// When the process exits before the readiness probe passes, waitReady
+		// must cancel the probe goroutine promptly via its child context.
+		// Without the fix, active stays non-zero until ctx is cancelled (the
+		// whole supervisor lifetime); with it, active → 0 within milliseconds.
+		It("terminates the WaitReady goroutine promptly after the process exits", func() {
+			probe2 := &trackingProbe{}
+			launcher2 := supervisor.NewLauncher(&stubBuilder{fn: func() (*exec.Cmd, error) {
+				return exec.Command("true"), nil
+			}})
+			sup2 := supervisor.New(launcher2, probe2, nil)
+
+			ctx2, cancel2 := context.WithCancel(context.Background())
+			DeferCleanup(cancel2)
+			go sup2.Run(ctx2)
+
+			Eventually(sup2.Status, "5s").Should(HaveField("State", supervisor.StateCrashed))
+			Eventually(probe2.active.Load, "500ms").Should(BeZero())
+		})
+	})
+
 	// ─── Pre-ready exit ───────────────────────────────────────────────────────
 
 	Describe("process exits before the readiness probe passes", func() {
